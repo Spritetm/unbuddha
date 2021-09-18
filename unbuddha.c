@@ -2,24 +2,28 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-uint8_t xorval;
-uint64_t mask;
-uint64_t resetmask=0xAC0C8880;
-uint8_t resetxorval=0xef;
+uint32_t lfsr_state_init=0x84;
+uint32_t lfsr_taps=0xe03e;
+uint32_t lfsr_state;
+uint8_t xorval=0xef;
+
+int gen_lfsr() {
+	int newbit=(__builtin_popcount(lfsr_state&lfsr_taps)+1)&1;
+	lfsr_state>>=1;
+	lfsr_state|=(newbit<<15);
+	return newbit;
+}
+
 void xorstream_reset() {
-	xorval=resetxorval;
-	mask=resetmask;
+	lfsr_state=lfsr_state_init;
+	xorval=0xef;
 }
 
 uint8_t xorstream_next() {
 	uint8_t ret=xorval;
 	int carry=(xorval&0x80)?1:0;
 	xorval<<=1;
-	if ((mask&1) ^ carry) xorval^=0x21;
-	mask>>=1;
-	if (mask==0) {
-		mask=resetmask;
-	}
+	if ((gen_lfsr()) ^ carry) xorval^=0x21;
 	return ret;
 }
 
@@ -61,6 +65,7 @@ uint16_t val16(uint16_t v) {
 	return (bv[0]<<8)|(bv[1]);
 }
 
+
 void code_decrypt(uint8_t *mem, int len) {
 	xorstream_reset();
 	//decrypt entities
@@ -70,13 +75,10 @@ void code_decrypt(uint8_t *mem, int len) {
 		mem[i]^=xorstream_next();
 	}
 
-1100110110000010000001011000111000101100000011001000100010000000
-                    1100110110000010000001011000111000101100000011001000100010000000
 
 	for (int i=0; i<16; i++) {
 		int len=val16(ent[i].len);
 		int off=val16(ent[i].offset);
-		resetmask=0xCD82058E2C0C8880;
 		xorstream_reset();
 		for (int j=0; j<len; j++) {
 			mem[j+off]^=xorstream_next();
@@ -92,6 +94,17 @@ void code_decrypt(uint8_t *mem, int len) {
 }
 
 int main(int argc, char *argv) {
+#if 0
+	uint64_t c;
+	xorstream_reset();
+	for (int i=0; i<64; i++) {
+		c>>=1;
+		if (gen_lfsr()) c|=(1ULL<<63ULL);
+	}
+	printf("%llx\n", c);
+	exit(0);
+#endif
+
 	FILE *f=fopen("buddha.bin", "rb");
 	uint8_t mem[2*1024*1024];
 	fread(mem, sizeof(mem), 1, f);
