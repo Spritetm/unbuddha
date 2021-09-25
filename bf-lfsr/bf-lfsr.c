@@ -67,6 +67,7 @@ int check_valid_file_desc(uint8_t *desc, int byte) {
 	return 1;
 }
 
+//brute-force the entire lfsr tap/state space to find one that generates the keystream
 int find_lfsr_for(uint64_t keystr, int len) {
 	for (int i=0; i<65536; i++) {
 		for (int j=0; j<65536; j++) {
@@ -77,7 +78,8 @@ int find_lfsr_for(uint64_t keystr, int len) {
 	}
 }
 
-
+//Recursive function that tries to iterate over the keystream keyspace, aborting as soon as possible
+//if a certain keystream cannot lead to a valid decryption
 void find_valid_lfsr_output_for_byte(uint8_t *enc, uint8_t *dec, int byte, int xorval, int xorchg, uint8_t *keystream) {
 	//end condition
 	if (byte==32) {
@@ -108,10 +110,15 @@ void find_valid_lfsr_output_for_byte(uint8_t *enc, uint8_t *dec, int byte, int x
 }
 
 
-
 #define NO_FILE_ENTS 8 //assume there are at least this many files
 
 int main(int argc, char **argv) {
+	if (argc!=2) {
+		printf("usage: %s flash_dump.bin\n", argv[0]);
+		printf("brute-forces lfsr parameters for a flash dump\n");
+	}
+
+//testing code for the routine that checks for a valid file entry
 	uint8_t testvector[32]={
 		0x00, 0x00, 0xc7, 0x3c, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x78, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x63, 0x6f, 0x64, 0x65, 0x2e, 0x61, 0x70, 0x70, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff

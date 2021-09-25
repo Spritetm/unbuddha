@@ -1,0 +1,10 @@
+aw/
+*.bin
+*.o
+*.csv
+ghidra.*
+notes.txt
+out/
+out_56/
+*.dsl
+unbuddha

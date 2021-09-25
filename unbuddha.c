@@ -5,7 +5,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include "crc.h"
-#include "cjson/cJSON.h"
+//#include "cjson/cJSON.h"
 
 uint32_t lfsr_state_init=0x84;
 uint8_t xorval_init=0xef;
@@ -159,6 +159,7 @@ int main(int argc, char **argv) {
 
 	if (filename[0]==0) {
 		printf("Usage: %s [-x xorval] [-t taps] [-i initial_state] [-o output_dir] flashdump.bin\n", argv[0]);
+		printf("Splits and decrypts (where possible) a flash dump into separate files.\n");
 		exit(0);
 	}
 
