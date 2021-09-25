@@ -4,6 +4,8 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include "crc.h"
+#include "cjson/cJSON.h"
 
 uint32_t lfsr_state_init=0x84;
 uint8_t xorval_init=0xef;
@@ -34,7 +36,9 @@ uint8_t xorstream_next() {
 //From 0x20: file entry table
 
 typedef struct  __attribute__((packed)) {
-	uint32_t unk1[3];
+	uint16_t ecrc;
+	uint16_t dcrc;
+	uint32_t unk1[2];
 	uint32_t filecount;
 	uint32_t unused[2];
 	char magic[8];
@@ -53,10 +57,11 @@ typedef struct  __attribute__((packed)) {
 	uint16_t idx;
 	uint16_t len;
 	uint16_t unk1;
-	uint16_t type;
+	uint16_t load_at;
 	uint16_t unk2;
 	uint16_t offset;
-	uint32_t unk3;
+	uint16_t dcrc;
+	uint16_t tcrc;
 } code_idx_ent_t;
 
 
@@ -71,24 +76,49 @@ uint16_t val16(uint16_t v) {
 }
 
 
+void check_crc(uint8_t *data, int len, uint16_t expected_crc, const char *desc) {
+	uint16_t res=crc_ccitt_false(0, data, len);
+	if (res!=expected_crc) {
+		printf("CRC mismatch! Expected %04X calculated %04X in %s\n", expected_crc, res, desc);
+	}
+}
+
 const char *out_dir="out/";
 
 void code_decrypt(uint8_t *mem, int len) {
 	xorstream_reset();
-	//decrypt entities
 	code_idx_ent_t *ent=(code_idx_ent_t*)mem;
-	for (int i=0; i<16*sizeof(code_idx_ent_t); i++) {
+	//decrypt first entity
+	for (int i=0; i<sizeof(code_idx_ent_t); i++) {
+		if ((i&15)==0) xorstream_reset();
+		mem[i]^=xorstream_next();
+	}
+	//We assume that the first entry is the one with the highest index number, and that the
+	//entries are labeled from 0 up to that.
+	//Note: this assumption may be wrong, but I have no idea how to otherwise find the
+	//number of indexes here...
+	int no_entries=val16(ent[0].idx);
+
+	//decrypt other entries
+	for (int i=sizeof(code_idx_ent_t); i<no_entries*sizeof(code_idx_ent_t); i++) {
 		if ((i&15)==0) xorstream_reset();
 		mem[i]^=xorstream_next();
 	}
 
-	for (int i=0; i<16; i++) {
+	for (int i=0; i<no_entries; i++) {
+		check_crc((uint8_t*)&ent[i], sizeof(code_idx_ent_t)-2, val16(ent[i].tcrc), "code.app table entry crc");
+
 		int len=val16(ent[i].len);
 		int off=val16(ent[i].offset);
+
 		xorstream_reset();
 		for (int j=0; j<len; j++) {
 			mem[j+off]^=xorstream_next();
 		}
+
+		printf("code.app chunk idx 0x%02x offset 0x%04X len 0x%04X load at %04X\n", 
+				val16(ent[i].idx), off, len, val16(ent[i].load_at));
+		check_crc(&mem[off], len, val16(ent[i].dcrc), "code.app data chunk crc");
 
 		char buf[256];
 		sprintf(buf, "%s/code-%04X.bin", out_dir, val16(ent[i].idx));
@@ -151,41 +181,34 @@ int main(int argc, char **argv) {
 	printf("Decrypting %s (%d KiB) to %s/ with parameters xorval 0x%02X taps 0x%04X initial_state 0x%04X\n",
 			filename, filesize/1024, out_dir, xorval_init, lfsr_taps, lfsr_state_init);
 
-#if 0
-	uint64_t c;
-	xorstream_reset();
-	for (int i=0; i<64; i++) {
-		c>>=1;
-		if (gen_lfsr()) c|=(1ULL<<63ULL);
-	}
-	printf("LFSR generates keystream %llx\n", c);
-	printf("XOR stream ");
-	xorstream_reset();
-	for (int i=0; i<16; i++) printf("%02X ", xorstream_next());
-	printf(".\n");
-#endif
-
 	xorstream_reset();
 	//Decrypt file entry header
 	for (int i=0; i<sizeof(file_entry_hdr_t); i++) {
 		mem[i]^=xorstream_next();
 	}
 	file_entry_hdr_t *fs_hdr=(file_entry_hdr_t *)&mem[0];
+
+	//sanity check
 	if (val32(fs_hdr->filecount)>256) {
 		printf("Improbable amount of files %x. Wrong decryption parameters?\n", val32(fs_hdr->filecount));
-		fs_hdr->filecount=32<<24;
-//		exit(1);
+		exit(1);
 	}
+	
+	//check crc
+	check_crc(&mem[2], 30, val16(fs_hdr->ecrc), "file header ecrc");
+	check_crc(&mem[32], 32*val32(fs_hdr->filecount), val16(fs_hdr->dcrc), "file index table crc");
+
 	//Decrypt file entries
 	for (int i=0x20; i<val32(fs_hdr->filecount)*sizeof(file_entry_hdr_t); i++) {
 		if ((i&0x1F)==0) xorstream_reset();
 		mem[i]^=xorstream_next();
-//		putchar(mem[i]);
 	}
 	file_entry_t *fs_ent=(file_entry_t *)&mem[0x20];
 	for (int i=0; i<val32(fs_hdr->filecount)-1; i++) {
 		uint32_t off=val32(fs_ent[i].offset);
 		uint32_t len=val32(fs_ent[i].length);
+		//check crc on (encrypted) data
+		check_crc(&mem[off], len, val16(fs_ent[i].dcrc), fs_ent[i].filename);
 		printf("@%06X % 8d bytes %s\n", off, len, fs_ent[i].filename);
 		if (off>filesize || off+len>filesize) {
 			printf("Invalid offset/length %u/%u! Wrong decryption params?\n", off, len);
@@ -194,10 +217,13 @@ int main(int argc, char **argv) {
 		if (strcmp(fs_ent[i].filename, "code.app")==0) {
 			code_decrypt(&mem[off], len);
 		} else {
+#if 0
+			//decrypt file?
 			xorstream_reset();
 			for (int i=off; i<off+len; i++) {
 				mem[i]^=xorstream_next();
 			}
+#endif
 		}
 		char buf[256];
 		sprintf(buf, "%s/%s", out_dir, fs_ent[i].filename);
@@ -205,4 +231,12 @@ int main(int argc, char **argv) {
 		fwrite(&mem[off], len, 1, of);
 		fclose(of);
 	}
+
+	char buf[256];
+	sprintf(buf, "%s/decoded-flash.bin", out_dir);
+	FILE *of=fopen(buf, "wb");
+	fwrite(mem, filesize, 1, of);
+	fclose(of);
+
+
 }

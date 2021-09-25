@@ -1,5 +1,5 @@
 TARGET = unbuddha
-OBJ = unbuddha.o
+OBJ = unbuddha.o crc.o
 CFLAGS=-ggdb
 
 $(TARGET): $(OBJ)

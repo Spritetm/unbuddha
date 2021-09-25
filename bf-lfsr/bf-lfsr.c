@@ -86,7 +86,7 @@ void find_valid_lfsr_output_for_byte(uint8_t *enc, uint8_t *dec, int byte, int x
 			if (keystream[i]) keystr|=(1<<i);
 		}
 		printf("Found lfsr keystream! %016LX Finding possible LFSR config...\n",keystr);
-		find_lfsr_for(keystr, 32);
+		find_lfsr_for(keystr, 30);
 		return;
 	}
 
