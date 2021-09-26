@@ -5,7 +5,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include "crc.h"
-//#include "cjson/cJSON.h"
+#include "cjson/cJSON.h"
 
 uint32_t lfsr_state_init=0x84;
 uint8_t xorval_init=0xef;
@@ -56,10 +56,12 @@ uint8_t xorstream_next() {
 typedef struct  __attribute__((packed)) {
 	uint16_t ecrc;
 	uint16_t dcrc;
-	uint32_t unk1[2];
+	uint32_t first_free_byte; //address after the last file
+	uint16_t dcrc2;           //same as dcrc
+	uint16_t unk;             //some other crc?
 	uint32_t filecount;
-	uint32_t unused[2];
-	char magic[8];
+	uint32_t unused[2];       //always 0xFFFFFFFF
+	char magic[8];            //SH50N[0][0xff][0xff]
 } file_entry_hdr_t;
 
 typedef struct  __attribute__((packed)) {
@@ -67,16 +69,16 @@ typedef struct  __attribute__((packed)) {
 	uint16_t dcrc;
 	uint32_t offset;
 	uint32_t length;
-	uint32_t unk2;
+	uint32_t index;
 	char filename[16];
 } file_entry_t;
 
 typedef struct  __attribute__((packed)) {
 	uint16_t idx;
 	uint16_t len;
-	uint16_t unk1;
+	uint16_t unk1; //0, possibly part of len
 	uint16_t load_at;
-	uint16_t unk2;
+	uint16_t unk2; //0, possibly part of load_at
 	uint16_t offset;
 	uint16_t dcrc;
 	uint16_t tcrc;
@@ -103,8 +105,9 @@ void check_crc(uint8_t *data, int len, uint16_t expected_crc, const char *desc) 
 
 const char *out_dir="out/";
 
-void code_decrypt(uint8_t *mem, int len) {
+void code_decrypt(uint8_t *mem, int len, cJSON *json) {
 	xorstream_reset();
+	cJSON *json_chunks=cJSON_AddArrayToObject(json, "chunks");
 	code_idx_ent_t *ent=(code_idx_ent_t*)mem;
 	//decrypt first entity
 	for (int i=0; i<sizeof(code_idx_ent_t); i++) {
@@ -128,6 +131,14 @@ void code_decrypt(uint8_t *mem, int len) {
 
 		int len=val16(ent[i].len);
 		int off=val16(ent[i].offset);
+		
+		char buf[256];
+		sprintf(buf, "code-%04X.bin", val16(ent[i].idx));
+		cJSON *json_chunk = cJSON_CreateObject();
+		cJSON_AddStringToObject(json_chunk, "file", buf);
+		cJSON_AddNumberToObject(json_chunk, "index", val16(ent[i].idx));
+		cJSON_AddNumberToObject(json_chunk, "loadaddr", val16(ent[i].load_at));
+		cJSON_AddItemToArray(json_chunks, json_chunk);
 
 		xorstream_reset();
 		for (int j=0; j<len; j++) {
@@ -138,7 +149,6 @@ void code_decrypt(uint8_t *mem, int len) {
 				val16(ent[i].idx), off, len, val16(ent[i].load_at));
 		check_crc(&mem[off], len, val16(ent[i].dcrc), "code.app data chunk crc");
 
-		char buf[256];
 		sprintf(buf, "%s/code-%04X.bin", out_dir, val16(ent[i].idx));
 		FILE *f=fopen(buf, "wb");
 		fwrite(&mem[off], len, 1, f);
@@ -210,6 +220,15 @@ int main(int argc, char **argv) {
 	printf("Decrypting %s (%d KiB) to %s/ with parameters xorval 0x%02X taps 0x%04X initial_state 0x%04X\n",
 			filename, filesize/1024, out_dir, xorval_init, lfsr_taps, lfsr_state_init);
 
+	cJSON *json = cJSON_CreateObject();
+	cJSON_AddNumberToObject(json, "flash-size", filesize);
+	cJSON_AddNumberToObject(json, "enc-xorval", xorval_init);
+	cJSON_AddNumberToObject(json, "enc-lfsrtaps", lfsr_taps);
+	cJSON_AddNumberToObject(json, "enc-lfsrstate", lfsr_state_init);
+	cJSON_AddNumberToObject(json, "flash-size", filesize);
+
+	cJSON *json_files = cJSON_AddArrayToObject(json, "files");
+
 	xorstream_reset();
 	//Decrypt file entry header
 	for (int i=0; i<sizeof(file_entry_hdr_t); i++) {
@@ -227,6 +246,12 @@ int main(int argc, char **argv) {
 	check_crc(&mem[2], 30, val16(fs_hdr->ecrc), "file header ecrc");
 	check_crc(&mem[32], 32*val32(fs_hdr->filecount), val16(fs_hdr->dcrc), "file index table crc");
 
+	cJSON *json_hdr = cJSON_CreateObject();
+	cJSON_AddNumberToObject(json_hdr, "flash-size", filesize);
+	cJSON_AddStringToObject(json_hdr, "magic", fs_hdr->magic);
+	cJSON_AddNumberToObject(json_hdr, "unk", fs_hdr->unk);
+	cJSON_AddItemToObject(json, "file-hdr", json_hdr);
+
 	//Decrypt file entries
 	for (int i=0x20; i<val32(fs_hdr->filecount)*sizeof(file_entry_hdr_t); i++) {
 		if ((i&0x1F)==0) xorstream_reset();
@@ -243,8 +268,16 @@ int main(int argc, char **argv) {
 			printf("Invalid offset/length %u/%u! Wrong decryption params?\n", off, len);
 			continue;
 		}
+		cJSON *json_file=cJSON_CreateObject();
+		cJSON_AddStringToObject(json_file, "filename", fs_ent[i].filename);
+		cJSON_AddNumberToObject(json_file, "index", val16(fs_ent[i].index));
+		cJSON_AddNumberToObject(json_file, "offset", off);
+		cJSON_AddItemToArray(json_files, json_file);
+
 		if (strcmp(fs_ent[i].filename, "code.app")==0) {
-			code_decrypt(&mem[off], len);
+			cJSON *json_code_app=cJSON_CreateObject();
+			code_decrypt(&mem[off], len, json_code_app);
+			cJSON_AddItemToObject(json, "codeapp", json_code_app);
 		} else {
 #if 0
 			//decrypt file?
@@ -261,11 +294,30 @@ int main(int argc, char **argv) {
 		fclose(of);
 	}
 
+	//See if there is any 'loose' data at the end of the flash, save that as well.
+	int pos=val32(fs_hdr->first_free_byte);
+	while (pos<filesize && mem[pos]==0xff) pos++;
+	if (pos<filesize) {
+		pos=pos&~15; //round to 16-byte multiple
+		cJSON_AddNumberToObject(json, "tail-data-offset", pos);
+		cJSON_AddStringToObject(json, "tail-data-file", "tail-data.bin");
+		char buf[256];
+		sprintf(buf, "%s/tail-data.bin", out_dir);
+		FILE *of=fopen(buf, "wb");
+		fwrite(&mem[pos], filesize-pos, 1, of);
+		fclose(of);
+	}
+
 	char buf[256];
 	sprintf(buf, "%s/decoded-flash.bin", out_dir);
 	FILE *of=fopen(buf, "wb");
 	fwrite(mem, filesize, 1, of);
 	fclose(of);
 
+	sprintf(buf, "%s/layout.json", out_dir);
+	of=fopen(buf, "w");
+	char *json_txt = cJSON_Print(json);
+	fwrite(json_txt, strlen(json_txt), 1, of);
+	fclose(of);
 
 }
