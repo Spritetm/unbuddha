@@ -201,7 +201,6 @@ void unbuddha(const char *filename) {
 	cJSON_AddNumberToObject(json, "enc-xorval", xorval_init);
 	cJSON_AddNumberToObject(json, "enc-lfsrtaps", lfsr_taps);
 	cJSON_AddNumberToObject(json, "enc-lfsrstate", lfsr_state_init);
-	cJSON_AddNumberToObject(json, "flash-size", filesize);
 
 	cJSON *json_files = cJSON_AddArrayToObject(json, "files");
 
@@ -221,7 +220,6 @@ void unbuddha(const char *filename) {
 	check_crc(&mem[0x800], 0xf800, val16(fs_hdr->fcrc), "flash range crc");
 
 	cJSON *json_hdr = cJSON_CreateObject();
-	cJSON_AddNumberToObject(json_hdr, "flash-size", filesize);
 	cJSON_AddStringToObject(json_hdr, "magic", fs_hdr->magic);
 	cJSON_AddItemToObject(json, "file-hdr", json_hdr);
 
