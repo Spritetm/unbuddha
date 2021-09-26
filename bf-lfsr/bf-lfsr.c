@@ -2,12 +2,21 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-
+//Thanks to threemetrejim for figuring out this may be a Galois LFSR instead of a
+//'normal' one!
 int check_lfsr(uint32_t state, uint32_t taps, int len, uint64_t tst) {
 	for (int i=0; i<len; i++) {
+#if 0
+		//'standard'
 		int newbit=(__builtin_popcount(state&taps)+1)&1;
 		state>>=1;
 		state|=(newbit<<15);
+#else
+		//Galois
+		int newbit=state&1;
+		state>>=1;
+		if (newbit) state^=taps;
+#endif
 		if (newbit != (tst&1)) return 0;
 		tst>>=1ULL;
 	}
@@ -88,7 +97,7 @@ void find_valid_lfsr_output_for_byte(uint8_t *enc, uint8_t *dec, int byte, int x
 			if (keystream[i]) keystr|=(1<<i);
 		}
 		printf("Found lfsr keystream! %016LX Finding possible LFSR config...\n",keystr);
-		find_lfsr_for(keystr, 30);
+		find_lfsr_for(keystr, 32);
 		return;
 	}
 
@@ -116,7 +125,9 @@ int main(int argc, char **argv) {
 	if (argc!=2) {
 		printf("usage: %s flash_dump.bin\n", argv[0]);
 		printf("brute-forces lfsr parameters for a flash dump\n");
+		exit(0);
 	}
+
 
 //testing code for the routine that checks for a valid file entry
 	uint8_t testvector[32]={

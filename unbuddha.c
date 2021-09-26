@@ -13,16 +13,34 @@ uint32_t lfsr_taps=0xe03e;
 uint32_t lfsr_state;
 uint8_t xorval;
 
+int lfsr_bit=0;
+uint64_t force_lfsr_output=0;
+
 int gen_lfsr() {
+	if (force_lfsr_output) {
+		int bit=force_lfsr_output>>(lfsr_bit&63);
+		lfsr_bit++;
+		return bit&1;
+	}
+	lfsr_bit++;
+#if 0
+	//normal
 	int newbit=(__builtin_popcount(lfsr_state&lfsr_taps)+1)&1;
 	lfsr_state>>=1;
 	lfsr_state|=(newbit<<15);
+#else
+	//Galois
+	int newbit=lfsr_state&1;
+	lfsr_state>>=1;
+	if (newbit) lfsr_state^=lfsr_taps;
+#endif
 	return newbit;
 }
 
 void xorstream_reset() {
 	lfsr_state=lfsr_state_init;
 	xorval=xorval_init;
+	lfsr_bit=0;
 }
 
 uint8_t xorstream_next() {
@@ -143,6 +161,9 @@ int main(int argc, char **argv) {
 		} else if (strcmp(argv[i], "-o")==0 && i<argc-1) {
 			i++;
 			out_dir=argv[i];
+		} else if (strcmp(argv[i], "-F")==0 && i<argc-1) {
+			i++;
+			force_lfsr_output=strtoll(argv[i], NULL, 0);
 		} else if (strcmp(argv[i], "-h")==0) {
 			filename="";
 			break;
@@ -162,6 +183,13 @@ int main(int argc, char **argv) {
 		printf("Splits and decrypts (where possible) a flash dump into separate files.\n");
 		exit(0);
 	}
+
+	uint64_t lfsr_out=0;
+	xorstream_reset();
+	for (int i=0; i<64; i++) {
+		if (gen_lfsr()) lfsr_out|=(1ULL<<i);
+	}
+	printf("LFSR out: %lX\n", lfsr_out);
 
 	mkdir(out_dir, 0777);
 
