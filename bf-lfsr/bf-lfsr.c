@@ -76,12 +76,14 @@ int check_valid_file_desc(uint8_t *desc, int byte) {
 	return 1;
 }
 
+uint8_t xorinit;
+
 //brute-force the entire lfsr tap/state space to find one that generates the keystream
 int find_lfsr_for(uint64_t keystr, int len) {
 	for (int i=0; i<65536; i++) {
 		for (int j=0; j<65536; j++) {
 			if (check_lfsr(i, j, len, keystr)) {
-				printf("Found LFSR: initial state 0x%x, taps 0x%x\n", i, j);
+				printf("Found LFSR: initial state 0x%x, taps 0x%x (use args -x 0x%02X -i 0x%04X -t 0x%04X )\n", i, j, xorinit, i, j);
 			}
 		}
 	}
@@ -158,7 +160,7 @@ int main(int argc, char **argv) {
 	
 	//Note: This value seems to consistently be 0x21. I wrote the code, so I'll still check. Worst
 	//case, this catches someone using a gibberish file.
-	uint8_t xorinit=firstfe[0];
+	xorinit=firstfe[0];
 	uint8_t xorchg=-1;
 	int found_xorchg=0;
 	const int zeroes_off[]={0, 4, 8, 12, 13};
